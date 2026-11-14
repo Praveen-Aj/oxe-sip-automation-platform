@@ -497,7 +497,7 @@ show_config() {
     local publish_state="OFF"
     [ "${PUBLISH_ENABLED}" = "1" ] && publish_state="ON  (PUBLISH after BYE, vq-rtcpxr -> OXE)"
     local auth_state="OFF"
-    [ "${AUTH_ENABLED}" = "1" ] && auth_state="ON  (401/407 digest challenge, pass: ${AUTH_PASSWORD})"
+    [ "${AUTH_ENABLED}" = "1" ] && auth_state="ON  (401/407 digest challenge, pass: ********)"
     local prack_state="OFF"
     [ "${PRACK_ENABLED}" = "1" ] && prack_state="ON  (100rel provisional reliability)"
     echo -e "${CYAN}======= Current Configuration =======${NC}"
@@ -580,6 +580,7 @@ generate_csvs() {
                 done
             fi
         } > "${CALL_CALLER_CSV}"
+        chmod 600 "${REG_CALLER_CSV}" "${CALL_CALLER_CSV}" 2>/dev/null || true
         echo -e "${GREEN}  [OK] ${CALL_CALLER_CSV}  (${cnt} pairs -> OXE ${OXE_IP}:${OXE_PORT})${NC}"
 
     elif [ "$ROLE" = "CALLED" ]; then
@@ -596,6 +597,7 @@ generate_csvs() {
                 done
             fi
         } > "${REG_CALLED_CSV}"
+        chmod 600 "${REG_CALLED_CSV}" 2>/dev/null || true
         local cnt=$((CALLED_RANGE_END - CALLED_RANGE_START + 1))
         echo -e "${GREEN}  [OK] ${REG_CALLED_CSV} (${cnt} users -> OXE ${OXE_IP})${NC}"
         echo -e "${CYAN}  (${UAS_XML} needs no CSV.)${NC}"

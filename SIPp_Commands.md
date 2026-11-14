@@ -489,13 +489,10 @@ INVITE_Caller_publish.xml      (only needed if you use PUBLISH_ENABLED=1)
 INVITE_Called.xml           (baseline UAS scenario)
 INVITE_Called_PRACK.xml     (reliable provisional PRACK UAS scenario)
 ```
-INVITE_Caller_publish.xml   (only needed if you use PUBLISH_ENABLED=1)
-```
 
-**CALLED host scenarios:**
+**Automated Test Suite:**
 ```
-INVITE_Called.xml           (baseline UAS scenario)
-INVITE_Called_PRACK.xml     (reliable provisional PRACK UAS scenario)
+regression_test.py          (reproducible 29-test automated regression validation suite)
 ```
 
 **Archived reference assets (`archive/` folder):**
@@ -507,3 +504,26 @@ Motor_40884_finalHF.txt     (OXE SIP motor reference trace)
 ```
 
 CSVs are generated locally by the manager — don't hand-copy the samples.
+
+---
+
+## 11. Physical OXE Acceptance Checklist
+
+The following checklist specifies every requirement that must be validated on physical OXE hardware (`172.19.112.51` / `172.19.112.121`) once live lab connectivity is available.
+
+> [!IMPORTANT]
+> In accordance with project instructions, all physical lab hardware tests are strictly classified as **NOT TESTED (Awaiting Lab Access)**. Synthetic validation has confirmed 100% software correctness, but live PBX acceptance requires physical network attachment.
+
+| Item ID | Test Description | Required Pre-conditions | Expected Outcome | Lab Validation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **OXE-01** | Baseline Registration (`REGISTER.xml`) | `AUTH_ENABLED=0`, OXE SIP trunk active | 200 OK from OXE registrar | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-02** | Authenticated Registration (`REGISTER_Auth.xml`) | `AUTH_ENABLED=1`, OXE SIP digest enabled | 401/407 challenged and successfully authenticated (200 OK) | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-03** | Baseline Call Flow (`INVITE_Caller.xml` -> `INVITE_Called.xml`) | `AUTH_ENABLED=0`, `PRACK_ENABLED=0` | Direct 180 Ringing -> 200 OK -> ACK -> BYE | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-04** | Authenticated Call Flow (`INVITE_Caller_Auth.xml`) | `AUTH_ENABLED=1`, `PRACK_ENABLED=0` | 401/407 Challenge -> ACK (top Via branch) -> retried INVITE -> 200 OK | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-05** | Reliable Provisional PRACK Flow (`INVITE_Caller_PRACK.xml` -> `INVITE_Called_PRACK.xml`) | `AUTH_ENABLED=0`, `PRACK_ENABLED=1` | 180/183 with `Require: 100rel` -> PRACK (`RAck: <RSeq> 1 INVITE`) -> 200 PRACK -> 200 INVITE | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-06** | Combined Mode Flow (`INVITE_Caller_Auth_PRACK.xml` -> `INVITE_Called_PRACK.xml`) | `AUTH_ENABLED=1`, `PRACK_ENABLED=1` | 401/407 -> retried INVITE (CSeq 2) -> Reliable 180/183 -> PRACK (`RAck: <RSeq> 2 INVITE`, CSeq 3) -> 200 OK (CSeq 2) -> ACK (CSeq 2) -> BYE (CSeq 4) | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-07** | Proxy Record-Route Traversals | Multi-node OXE / ABC-F network | Both 183 and 200 OK preserve upstream proxy `Record-Route` header lines exactly | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-08** | Physical Call Quality PUBLISH Metrics | `PUBLISH_ENABLED=1` | VoIP metrics published to OXE collector after call BYE | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-09** | Second-PC Portability & Sync | Peer PC on `172.19.112.60` (or `192.168.1.7`) | Non-admin execution, dynamic paths, automatic scenario synchronization via option 15 | **NOT TESTED (Awaiting Lab Access)** |
+| **OXE-10** | Security Hardening Verification | Running `sipp_manager.sh` | Passwords masked in console; CSVs generated with restricted `chmod 600` permissions | **NOT TESTED (Awaiting Lab Access)** |
+

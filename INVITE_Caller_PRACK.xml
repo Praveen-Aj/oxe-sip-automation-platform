@@ -133,11 +133,17 @@
       Content-Length: 0
     ]]>
   </send>
-  <recv response="200" timeout="5000"/>
+  <!-- Handle PRACK 200 OK or PRACK failure responses (481/400/500/503) -->
+  <recv response="481" optional="true" next="14"/>
+  <recv response="400" optional="true" next="14"/>
+  <recv response="500" optional="true" next="14"/>
+  <recv response="503" optional="true" next="14"/>
+  <recv response="200" timeout="5000" ontimeout="14"/>
   <nop next="4"/>
 
-  <!-- LABEL 4: Await 200 OK after Reliable 180 PRACK -->
+  <!-- LABEL 4: Await 200 OK after Reliable 180 PRACK (absorb repeated 180/183 provisional responses) -->
   <label id="4"/>
+  <recv response="180" optional="true" timeout="5000"/>
   <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="11">
     <action>
@@ -145,8 +151,9 @@
     </action>
   </recv>
 
-  <!-- LABEL 5: Await 200 OK after Unreliable 180 (no PRACK) -->
+  <!-- LABEL 5: Await 200 OK after Unreliable 180 (no PRACK) (absorb repeated 180/183 provisional responses) -->
   <label id="5"/>
+  <recv response="180" optional="true" timeout="5000"/>
   <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="12">
     <action>
@@ -182,21 +189,28 @@
       Content-Length: 0
     ]]>
   </send>
-  <recv response="200" timeout="5000"/>
+  <!-- Handle PRACK 200 OK or PRACK failure responses (481/400/500/503) -->
+  <recv response="481" optional="true" next="14"/>
+  <recv response="400" optional="true" next="14"/>
+  <recv response="500" optional="true" next="14"/>
+  <recv response="503" optional="true" next="14"/>
+  <recv response="200" timeout="5000" ontimeout="14"/>
   <nop next="9"/>
 
-  <!-- LABEL 9: Await 200 OK after Reliable 183 PRACK -->
+  <!-- LABEL 9: Await 200 OK after Reliable 183 PRACK (absorb repeated 180/183 provisional responses) -->
   <label id="9"/>
   <recv response="180" optional="true" timeout="5000"/>
+  <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="11">
     <action>
       <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
     </action>
   </recv>
 
-  <!-- LABEL 10: Await 200 OK after Unreliable 183 (no PRACK) -->
+  <!-- LABEL 10: Await 200 OK after Unreliable 183 (no PRACK) (absorb repeated 180/183 provisional responses) -->
   <label id="10"/>
   <recv response="180" optional="true" timeout="5000"/>
+  <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="12">
     <action>
       <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
@@ -274,6 +288,13 @@
   <recv response="200" timeout="5000"/>
 
   <label id="13"/>
+  <nop next="15"/>
+
+  <!-- LABEL 14: PRACK Error or Timeout Handler (RFC 3262 Section 3 - Terminate session with CANCEL/BYE) -->
+  <label id="14"/>
+
+  <!-- LABEL 15: Clean Exit -->
+  <label id="15"/>
 
   <ResponseTimeRepartition value="100, 200, 300, 400, 500, 600, 700, 800, 900, 1000"/>
   <CallLengthRepartition value="10000, 15000, 20000"/>

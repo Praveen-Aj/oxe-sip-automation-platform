@@ -223,7 +223,8 @@
   <!-- ==================== 180 EVALUATION (AUTH) ==================== -->
   <label id="3"/>
   <nop test="4" next="4"/>
-  <!-- Unreliable 180 -> wait 200 without PRACK -->
+  <!-- Unreliable 180 -> wait 200 without PRACK (absorb repeated 180/183) -->
+  <recv response="180" optional="true" timeout="5000"/>
   <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="10">
     <action>
@@ -234,7 +235,8 @@
   <!-- Reliable 180: check RSeq -->
   <label id="4"/>
   <nop test="5" next="7"/>
-  <!-- RSeq didn't match -> wait 200 without PRACK -->
+  <!-- RSeq didn't match -> wait 200 without PRACK (absorb repeated 180/183) -->
+  <recv response="180" optional="true" timeout="5000"/>
   <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="10">
     <action>
@@ -245,8 +247,9 @@
   <!-- ==================== 183 EVALUATION (AUTH) ==================== -->
   <label id="5"/>
   <nop test="4" next="6"/>
-  <!-- Unreliable 183 -> wait 200 without PRACK -->
+  <!-- Unreliable 183 -> wait 200 without PRACK (absorb repeated 180/183) -->
   <recv response="180" optional="true" timeout="5000"/>
+  <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="10">
     <action>
       <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
@@ -256,8 +259,9 @@
   <!-- Reliable 183: check RSeq -->
   <label id="6"/>
   <nop test="5" next="8"/>
-  <!-- RSeq didn't match -> wait 200 without PRACK -->
+  <!-- RSeq didn't match -> wait 200 without PRACK (absorb repeated 180/183) -->
   <recv response="180" optional="true" timeout="5000"/>
+  <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="10">
     <action>
       <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
@@ -281,7 +285,13 @@
       Content-Length: 0
     ]]>
   </send>
-  <recv response="200" timeout="5000"/>
+  <!-- Handle PRACK 200 OK or PRACK failure responses (481/400/500/503) -->
+  <recv response="481" optional="true" next="12"/>
+  <recv response="400" optional="true" next="12"/>
+  <recv response="500" optional="true" next="12"/>
+  <recv response="503" optional="true" next="12"/>
+  <recv response="200" timeout="5000" ontimeout="12"/>
+  <recv response="180" optional="true" timeout="5000"/>
   <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="9">
     <action>
@@ -306,8 +316,14 @@
       Content-Length: 0
     ]]>
   </send>
-  <recv response="200" timeout="5000"/>
+  <!-- Handle PRACK 200 OK or PRACK failure responses (481/400/500/503) -->
+  <recv response="481" optional="true" next="12"/>
+  <recv response="400" optional="true" next="12"/>
+  <recv response="500" optional="true" next="12"/>
+  <recv response="503" optional="true" next="12"/>
+  <recv response="200" timeout="5000" ontimeout="12"/>
   <recv response="180" optional="true" timeout="5000"/>
+  <recv response="183" optional="true" timeout="5000"/>
   <recv response="200" timeout="30000" next="9">
     <action>
       <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
