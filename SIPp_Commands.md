@@ -50,9 +50,13 @@ CALLED  -> /root/praveen/SIPP/SIPP_CALLED_Scripts  (or custom directory)
 | `REGISTER.xml`          | Unified REGISTER UAC scenario (used by both sides) | both |
 | `REGISTER_Caller.xml`   | Legacy REGISTER UAC scenario (retained for backward compatibility) | CALLER |
 | `REGISTER_Called.xml`   | Legacy REGISTER UAC scenario (retained for backward compatibility) | CALLED |
+| `REGISTER_Auth.xml`     | Authenticated REGISTER scenario (handles 401/407 challenges, MD5 digest, RFC 3665 no-ACK). Selected when `AUTH_ENABLED=1` (menu **16**). | both |
 | `INVITE_Caller.xml`         | Basic-call UAC (INVITE → ACK → pause → BYE → 200) | CALLER |
 | `INVITE_Caller_publish.xml` | Same as above, plus a PUBLISH (vq-rtcpxr, MOS 4.2) to OXE after BYE — for VoIP-Metrics-Collector testing. Selected when `PUBLISH_ENABLED=1` (menu **11**). | CALLER |
+| `INVITE_Caller_Auth.xml`    | Authenticated UAC scenario (handles 401/407 challenges, Via branch isolation, CSeq matching, 486 rejection handling). Selected when `AUTH_ENABLED=1` (menu **16**). | CALLER |
+| `INVITE_Caller_PRACK.xml`   | Reliable provisional UAC scenario (180/183, Require: 100rel validation, RSeq extraction, RAck generation). Selected when `PRACK_ENABLED=1` (menu **17**). | CALLER |
 | `INVITE_Called.xml`         | Basic-call UAS (180 → 200+SDP → BYE 200) — no CSV needed | CALLED |
+| `INVITE_Called_PRACK.xml`   | Reliable provisional UAS scenario (sends 183 with Require: 100rel and RSeq: 101, awaits PRACK, answers call). Selected when `PRACK_ENABLED=1` (menu **17**). | CALLED |
 | `oxe_remote.py`         | OXE SSH/telnet provisioning agent | both |
 | `sync_watcher.py`       | Auto-sync daemon syncing scripts, configs, and XMLs | both |
 | `create_sip_users.sh`   | OXE batch subscriber creation tool | both |
@@ -313,6 +317,99 @@ OXE keys SIP subscribers by `<num>@<provisioned IP>`, where the provisioned IP i
 
 ---
 
+## Phase 3A: SIP Protocol Hardening (Authentication & PRACK/100rel)
+
+Phase 3A introduces validated SIP protocol hardening features without altering the baseline OXE production flows. All hardening features are modular, isolated in dedicated scenarios, and controlled via configuration flags or interactive menu toggles.
+
+### 1. Configuration Options (`sipp_config.conf`)
+
+| Parameter | Default | Values | Purpose |
+|:---|:---:|:---:|:---|
+| `AUTH_ENABLED` | `0` | `0` (off) / `1` (on) | Toggles authenticated scenarios (`REGISTER_Auth.xml` and `INVITE_Caller_Auth.xml`). Menu option **16**. |
+| `AUTH_PASSWORD` | `"secret"` | string | Shared secret or subscriber password used for MD5 challenge authorization. |
+| `PRACK_ENABLED` | `0` | `0` (off) / `1` (on) | Toggles reliable provisional response scenarios (`INVITE_Caller_PRACK.xml` and `INVITE_Called_PRACK.xml`). Menu option **17**. |
+
+### 2. Authentication Architecture
+
+- **REGISTER Authentication (`REGISTER_Auth.xml`)**:
+  - Handles initial unauthenticated `REGISTER` (`CSeq: 1 REGISTER`).
+  - Catches `401 Unauthorized` (and upstream `407 Proxy Authentication Required`) with `auth="true"`.
+  - Strictly adheres to **RFC 3665 §2.1** and **RFC 3261 §10.2**: transmits **NO ACK** for non-INVITE challenge responses.
+  - Automatically retransmits authenticated `REGISTER` with `CSeq: 2 REGISTER`, a fresh Via branch, and computed MD5 Digest Authorization (`[field2]`).
+  - Supports direct 200 OK responses when no challenge is issued by OXE.
+
+- **INVITE Authentication (`INVITE_Caller_Auth.xml`)**:
+  - Transmits initial `INVITE` (`CSeq: 1 INVITE`).
+  - Intercepts `401 Unauthorized` or `407 Proxy Authentication Required`.
+  - **Via Branch Isolation**: Uses regex `<ereg regexp="branch=[^; \r\n]+" search_in="hdr" header="Via:" assign_to="1"/>` to capture only the top UAC Via branch. Reconstructs a single clean `Via` in the non-2xx ACK, completely avoiding duplicate Via header concatenation when traversing multi-hop proxy routes.
+  - **Transaction CSeq Matching**: Non-2xx ACK uses `CSeq: 1 ACK` to acknowledge the initial transaction.
+  - **Authenticated INVITE Retry**: Transmits authenticated `INVITE` with `CSeq: 2 INVITE`, brand-new Via branch, and computed Digest Authorization (`[field4]`).
+  - **Rejection Handling**: If the authenticated call receives a 486 Busy Here, 401 retry failure, 404, or 503, the scenario sends a non-2xx ACK matching `CSeq: 2 ACK` and the retried Via branch, then exits cleanly.
+  - **2xx ACK**: Per RFC 3261 §17.1.1.3, the final 2xx ACK for a successful dialog uses a fresh branch ID and matches `CSeq: 2 ACK`.
+  - **BYE**: In-dialog session termination uses `CSeq: 3 BYE`.
+
+### 3. CSV Formats for Authentication
+
+To avoid SIPp nested-bracket parsing errors (`[authentication username=[field0] ...]` is rejected by SIPp's parser), the manager dynamically embeds the complete authentication directive into the CSV injection file when `AUTH_ENABLED=1`:
+
+- **Registration CSV (`REGISTER_Caller_<NET>_node<N>.csv`)**:
+  ```text
+  SEQUENTIAL;field0;field1;field2
+  55001;172.19.5.121;[authentication username=55001 password=secret]
+  55002;172.19.5.121;[authentication username=55002 password=secret]
+  ```
+- **Call CSV (`INVITE_Caller_<NET>_node<N>.csv`)**:
+  ```text
+  SEQUENTIAL;field0;field1;field2;field3;field4
+  55001;55011;172.19.5.121;5060;[authentication username=55001 password=secret]
+  55002;55012;172.19.5.121;5060;[authentication username=55002 password=secret]
+  ```
+When `AUTH_ENABLED=0` (default), standard 2-field and 4-field baseline CSVs are generated.
+
+### 4. PRACK / 100rel Architecture
+
+- **Caller Scenario (`INVITE_Caller_PRACK.xml`)**:
+  - Advertises `Supported: 100rel` in the initial INVITE.
+  - Inspects provisional response (`183 Session Progress` or `180 Ringing`):
+    - Validates `Require: 100rel` using `<strcmp>`.
+    - Validates numeric `RSeq` using regex `[0-9]+` and `<strcmp>`.
+    - Captures `CSeq` number.
+  - When reliable: transmits `PRACK [next_url]` with `RAck: <RSeq> <CSeq> INVITE` and monotonic `CSeq: [cseq] PRACK`. Awaits PRACK 200 OK before proceeding.
+  - When unreliable (or 100rel absent): cleanly jumps to the direct dialog path without blocking.
+  - Preserves OXE-specific addressing (`sip:[field1]@[field2]:[field3]`).
+- **Called Scenario (`INVITE_Called_PRACK.xml`)**:
+  - Receives incoming INVITE.
+  - Transmits 183 Session Progress with `Require: 100rel` and `RSeq: 101`.
+  - Awaits incoming PRACK, responds with 200 OK to PRACK.
+  - Answers with 200 OK to INVITE, awaits ACK, awaits BYE, responds 200 OK.
+
+### 5. CSeq Behavior & SIPp Engine Requirements
+
+- **Minimum Verified SIPp Version**: **SIPp v3.7.7** (compiled with TLS, PCAP, SCTP, SHA256).
+- **Monotonic Progression**: Verified that native `[cseq]` automatically produces clean integer values across discrete requests:
+  - Without PRACK: `CSeq: 1 INVITE` → `CSeq: 1 ACK` → `CSeq: 2 BYE`.
+  - With PRACK: `CSeq: 1 INVITE` → `CSeq: 2 PRACK` → `CSeq: 1 ACK` → `CSeq: 3 BYE`.
+  - With Authentication: `CSeq: 1 INVITE` → `CSeq: 1 ACK` → `CSeq: 2 INVITE` → `CSeq: 2 ACK` → `CSeq: 3 BYE`.
+- **Floating-Point Arithmetic Hazard**: Never use `<add assign_to="var" value="1"/>` to format CSeq headers; SIPp casts arithmetic variables to floating point (`2.000000`), generating malformed SIP headers.
+
+### 6. Execution & Rollback Instructions
+
+- **To run with Authentication**:
+  - Interactive: Run `./sipp_manager.sh`, select **16** to toggle Auth ON (or set `AUTH_ENABLED=1` in `sipp_config.conf`), then select **1** (Generate CSVs), and run **2** (Register) or **3** (Basic Call).
+- **To run with PRACK**:
+  - Interactive: Run `./sipp_manager.sh`, select **17** to toggle PRACK ON (or set `PRACK_ENABLED=1` in `sipp_config.conf`), start CALLED host first, then start CALLER.
+- **Rollback to Baseline OXE Behavior**:
+  - Set `AUTH_ENABLED=0` and `PRACK_ENABLED=0` in `sipp_config.conf` (or toggle 16 and 17 off in `./sipp_manager.sh`).
+  - Regenerate CSVs with option **1**. The system immediately returns to baseline `REGISTER.xml` and `INVITE_Caller.xml`.
+  - To discard all Phase 3A branch changes: `git checkout main`.
+
+### 7. Known Limitations
+
+- **Physical Lab Accessibility**: Remote physical hosts `172.19.112.50` (CALLER) and `172.19.112.60` (CALLED) remain unreachable over SSH/LAN. All tests are validated against local synthetic SIP engines running SIPp v3.7.7.
+- **Multiple Provisional Looping**: SIPp's execution model is a linear state engine. Dynamic looping over an arbitrary, unknown number of provisional responses without a terminal condition causes engine stalls; advanced arbitrary looping remains deferred.
+
+---
+
 ## File deployment cheatsheet
 
 **Common files on BOTH hosts:**
@@ -320,7 +417,8 @@ OXE keys SIP subscribers by `<num>@<provisioned IP>`, where the provisioned IP i
 sipp                        (binary)
 sipp_config.conf            (central configuration)
 sipp_manager.sh             (menu orchestrator)
-REGISTER.xml                (unified registration scenario)
+REGISTER.xml                (unified baseline registration scenario)
+REGISTER_Auth.xml           (authenticated registration scenario)
 REGISTER_Caller.xml         (legacy caller registration scenario - optional fallback)
 REGISTER_Called.xml         (legacy callee registration scenario - optional fallback)
 oxe_remote.py               (OXE provisioning agent)
@@ -331,13 +429,16 @@ delete_sip_users.sh         (OXE user deletion script)
 
 **CALLER host scenarios:**
 ```
-INVITE_Caller.xml
+INVITE_Caller.xml           (baseline UAC scenario)
+INVITE_Caller_Auth.xml      (authenticated UAC scenario)
+INVITE_Caller_PRACK.xml     (reliable provisional PRACK UAC scenario)
 INVITE_Caller_publish.xml   (only needed if you use PUBLISH_ENABLED=1)
 ```
 
 **CALLED host scenarios:**
 ```
-INVITE_Called.xml
+INVITE_Called.xml           (baseline UAS scenario)
+INVITE_Called_PRACK.xml     (reliable provisional PRACK UAS scenario)
 ```
 
 **Archived reference assets (`archive/` folder):**

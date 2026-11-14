@@ -27,11 +27,18 @@ ROLE=""
 REG_XML_UNIFIED="REGISTER.xml"
 REG_CALLER_XML="REGISTER_Caller.xml"
 REG_CALLED_XML="REGISTER_Called.xml"
+REG_AUTH_XML="REGISTER_Auth.xml"
 REG_XML="${REG_XML_UNIFIED}"   # resolved dynamically by select_reg_xml()
+
 UAC_XML_PLAIN="INVITE_Caller.xml"
 UAC_XML_PUBLISH="INVITE_Caller_publish.xml"
+UAC_XML_AUTH="INVITE_Caller_Auth.xml"
+UAC_XML_PRACK="INVITE_Caller_PRACK.xml"
 UAC_XML="${UAC_XML_PLAIN}"   # resolved dynamically by select_uac_xml()
-UAS_XML="INVITE_Called.xml"
+
+UAS_XML_PLAIN="INVITE_Called.xml"
+UAS_XML_PRACK="INVITE_Called_PRACK.xml"
+UAS_XML="${UAS_XML_PLAIN}"   # resolved dynamically by select_uas_xml()
 
 # ---- Trace flags (added when DEBUG_TRACE=1) ----
 TRACE_FLAGS="-trace_msg -trace_err -trace_calldebug -trace_logs -nd"
@@ -306,7 +313,11 @@ load_config() {
     PEER_SCRIPT_DIR="${PEER_SCRIPT_DIR:-}"
     PEER_SCRIPT_DIR_ON_CALLER="${PEER_SCRIPT_DIR_ON_CALLER:-}"
     PEER_SCRIPT_DIR_ON_CALLED="${PEER_SCRIPT_DIR_ON_CALLED:-}"
+    AUTH_ENABLED="${AUTH_ENABLED:-0}"
+    AUTH_PASSWORD="${AUTH_PASSWORD:-secret}"
+    PRACK_ENABLED="${PRACK_ENABLED:-0}"
     select_uac_xml
+    select_uas_xml
     select_reg_xml
 
     local missing=""
@@ -441,17 +452,32 @@ trace_suffix() {
 }
 
 select_uac_xml() {
-    # Pick the CALLER-side scenario based on PUBLISH_ENABLED.
-    if [ "${PUBLISH_ENABLED}" = "1" ]; then
+    # Pick the CALLER-side scenario based on PRACK_ENABLED, AUTH_ENABLED, and PUBLISH_ENABLED.
+    if [ "${PRACK_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAC_XML_PRACK}" ]; then
+        UAC_XML="${UAC_XML_PRACK}"
+    elif [ "${AUTH_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAC_XML_AUTH}" ]; then
+        UAC_XML="${UAC_XML_AUTH}"
+    elif [ "${PUBLISH_ENABLED}" = "1" ]; then
         UAC_XML="${UAC_XML_PUBLISH}"
     else
         UAC_XML="${UAC_XML_PLAIN}"
     fi
 }
 
+select_uas_xml() {
+    # Pick the CALLED-side scenario based on PRACK_ENABLED.
+    if [ "${PRACK_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAS_XML_PRACK}" ]; then
+        UAS_XML="${UAS_XML_PRACK}"
+    else
+        UAS_XML="${UAS_XML_PLAIN}"
+    fi
+}
+
 select_reg_xml() {
-    # Prefer unified REGISTER.xml; fall back to role-specific XMLs for backward compatibility
-    if [ -f "${SCRIPT_DIR}/${REG_XML_UNIFIED}" ]; then
+    # Prefer authenticated REGISTER_Auth.xml when AUTH_ENABLED=1
+    if [ "${AUTH_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${REG_AUTH_XML}" ]; then
+        REG_XML="${REG_AUTH_XML}"
+    elif [ -f "${SCRIPT_DIR}/${REG_XML_UNIFIED}" ]; then
         REG_XML="${REG_XML_UNIFIED}"
     elif [ "$ROLE" = "CALLER" ] && [ -f "${SCRIPT_DIR}/${REG_CALLER_XML}" ]; then
         REG_XML="${REG_CALLER_XML}"
@@ -467,6 +493,10 @@ show_config() {
     [ "${DEBUG_TRACE}" = "1" ] && trace_state="ON  (${TRACE_FLAGS})"
     local publish_state="OFF"
     [ "${PUBLISH_ENABLED}" = "1" ] && publish_state="ON  (PUBLISH after BYE, vq-rtcpxr -> OXE)"
+    local auth_state="OFF"
+    [ "${AUTH_ENABLED}" = "1" ] && auth_state="ON  (401/407 digest challenge, pass: ${AUTH_PASSWORD})"
+    local prack_state="OFF"
+    [ "${PRACK_ENABLED}" = "1" ] && prack_state="ON  (100rel provisional reliability)"
     echo -e "${CYAN}======= Current Configuration =======${NC}"
     echo -e "  Role:        ${BOLD}${ROLE}${NC}"
     echo -e "  Network:     ${BOLD}${NETWORK}${NC}   (LAN=172.19.112.x  WAN=192.168.1.x)"
@@ -478,8 +508,9 @@ show_config() {
     echo -e "  Transport:   ${TRANSPORT}   (XMLs use [transport])"
     echo -e "  Debug trace: ${trace_state}"
     echo -e "  PUBLISH:     ${publish_state}"
-    echo -e "  REG XML:     ${REG_XML}"
-    echo -e "  UAC XML:     ${UAC_XML}"
+    echo -e "  Auth (SIP):  ${auth_state}"
+    echo -e "  PRACK/100rel:${prack_state}"
+    echo -e "  Scenarios:   REG=${REG_XML}  UAC=${UAC_XML}  UAS=${UAS_XML}"
     echo -e "  CSVs:        ${REG_CALLER_CSV} / ${REG_CALLED_CSV} / ${CALL_CALLER_CSV}"
     echo -e "  Peer Dir:    $(peer_script_dir)"
     echo -e "  --- OXE User Management ---"
@@ -494,10 +525,17 @@ generate_csvs() {
 
     if [ "$ROLE" = "CALLER" ]; then
         {
-            echo "SEQUENTIAL;field0;field1"
-            for i in $(seq ${CALLER_RANGE_START} ${CALLER_RANGE_END}); do
-                echo "${i};${OXE_IP}"
-            done
+            if [ "${AUTH_ENABLED}" = "1" ]; then
+                echo "SEQUENTIAL;field0;field1;field2"
+                for i in $(seq ${CALLER_RANGE_START} ${CALLER_RANGE_END}); do
+                    echo "${i};${OXE_IP};[authentication username=${i} password=${AUTH_PASSWORD}]"
+                done
+            else
+                echo "SEQUENTIAL;field0;field1"
+                for i in $(seq ${CALLER_RANGE_START} ${CALLER_RANGE_END}); do
+                    echo "${i};${OXE_IP}"
+                done
+            fi
         } > "${REG_CALLER_CSV}"
         local cnt=$((CALLER_RANGE_END - CALLER_RANGE_START + 1))
         echo -e "${GREEN}  [OK] ${REG_CALLER_CSV}  (${cnt} users -> OXE ${OXE_IP})${NC}"
@@ -506,29 +544,49 @@ generate_csvs() {
         # CH subscriber dictionary by <number>@<OXE_IP>, so Request-URI / From / To
         # must use the OXE address. OXE then routes the call to the SIP-registrar-
         # bound endpoint (CALLER_IP for caller, CALLED_IP for callee).
+        # When AUTH_ENABLED=1, field4 = [authentication username=${i} password=${AUTH_PASSWORD}].
         {
-            echo "SEQUENTIAL;field0;field1;field2;field3"
-            local callee=${CALLED_RANGE_START}
-            for i in $(seq ${CALLER_RANGE_START} ${CALLER_RANGE_END}); do
-                if [ "$callee" -gt "$CALLED_RANGE_END" ]; then
-                    callee=${CALLED_RANGE_START}
-                fi
-                echo "${i};${callee};${OXE_IP};${OXE_PORT}"
-                callee=$((callee + 1))
-            done
+            if [ "${AUTH_ENABLED}" = "1" ]; then
+                echo "SEQUENTIAL;field0;field1;field2;field3;field4"
+                local callee=${CALLED_RANGE_START}
+                for i in $(seq ${CALLER_RANGE_START} ${CALLER_RANGE_END}); do
+                    if [ "$callee" -gt "$CALLED_RANGE_END" ]; then
+                        callee=${CALLED_RANGE_START}
+                    fi
+                    echo "${i};${callee};${OXE_IP};${OXE_PORT};[authentication username=${i} password=${AUTH_PASSWORD}]"
+                    callee=$((callee + 1))
+                done
+            else
+                echo "SEQUENTIAL;field0;field1;field2;field3"
+                local callee=${CALLED_RANGE_START}
+                for i in $(seq ${CALLER_RANGE_START} ${CALLER_RANGE_END}); do
+                    if [ "$callee" -gt "$CALLED_RANGE_END" ]; then
+                        callee=${CALLED_RANGE_START}
+                    fi
+                    echo "${i};${callee};${OXE_IP};${OXE_PORT}"
+                    callee=$((callee + 1))
+                done
+            fi
         } > "${CALL_CALLER_CSV}"
         echo -e "${GREEN}  [OK] ${CALL_CALLER_CSV}  (${cnt} pairs -> OXE ${OXE_IP}:${OXE_PORT})${NC}"
 
     elif [ "$ROLE" = "CALLED" ]; then
         {
-            echo "SEQUENTIAL;field0;field1"
-            for i in $(seq ${CALLED_RANGE_START} ${CALLED_RANGE_END}); do
-                echo "${i};${OXE_IP}"
-            done
+            if [ "${AUTH_ENABLED}" = "1" ]; then
+                echo "SEQUENTIAL;field0;field1;field2"
+                for i in $(seq ${CALLED_RANGE_START} ${CALLED_RANGE_END}); do
+                    echo "${i};${OXE_IP};[authentication username=${i} password=${AUTH_PASSWORD}]"
+                done
+            else
+                echo "SEQUENTIAL;field0;field1"
+                for i in $(seq ${CALLED_RANGE_START} ${CALLED_RANGE_END}); do
+                    echo "${i};${OXE_IP}"
+                done
+            fi
         } > "${REG_CALLED_CSV}"
         local cnt=$((CALLED_RANGE_END - CALLED_RANGE_START + 1))
         echo -e "${GREEN}  [OK] ${REG_CALLED_CSV} (${cnt} users -> OXE ${OXE_IP})${NC}"
-        echo -e "${CYAN}  (INVITE_Called.xml needs no CSV.)${NC}"
+        echo -e "${CYAN}  (${UAS_XML} needs no CSV.)${NC}"
     fi
     echo ""
 }
@@ -572,6 +630,8 @@ run_register() {
 run_basic_call() {
     echo -e "${YELLOW}Starting Basic Call (${ROLE} / ${NETWORK})...${NC}"
     verify_bind_ip
+    select_uac_xml
+    select_uas_xml
     local trace; trace=$(trace_suffix)
     local sipp_bin; sipp_bin=$(resolve_sipp)
     check_file "$sipp_bin" || return 1
@@ -641,6 +701,8 @@ run_register_bg() {
 }
 
 run_basic_call_bg() {
+    select_uac_xml
+    select_uas_xml
     local trace; trace=$(trace_suffix)
     local sipp_bin; sipp_bin=$(resolve_sipp)
     check_file "$sipp_bin" || return 1
@@ -747,6 +809,38 @@ toggle_publish() {
         echo -e "${RED}  WARNING: ${UAC_XML} not present in this directory.${NC}"
     fi
     echo -e "${CYAN}(session-only - edit sipp_config.conf to persist)${NC}"
+}
+
+toggle_auth() {
+    if [ "${AUTH_ENABLED}" = "1" ]; then
+        AUTH_ENABLED=0
+        echo -e "${YELLOW}SIP Authentication: OFF (baseline unauthenticated scenarios)${NC}"
+    else
+        AUTH_ENABLED=1
+        echo -e "${GREEN}SIP Authentication: ON  (REGISTER_Auth.xml / INVITE_Caller_Auth.xml)${NC}"
+    fi
+    select_reg_xml
+    select_uac_xml
+    select_uas_xml
+    echo -e "  Scenarios: REG=${REG_XML}  UAC=${UAC_XML}  UAS=${UAS_XML}"
+    echo -e "${CYAN}(session-only - edit AUTH_ENABLED in sipp_config.conf to persist)${NC}"
+    if [ -f "${REG_CALLER_CSV}" ] || [ -f "${REG_CALLED_CSV}" ] || [ -f "${CALL_CALLER_CSV}" ]; then
+        generate_csvs
+    fi
+}
+
+toggle_prack() {
+    if [ "${PRACK_ENABLED}" = "1" ]; then
+        PRACK_ENABLED=0
+        echo -e "${YELLOW}PRACK / 100rel: OFF (baseline provisional scenarios)${NC}"
+    else
+        PRACK_ENABLED=1
+        echo -e "${GREEN}PRACK / 100rel: ON  (INVITE_Caller_PRACK.xml / INVITE_Called_PRACK.xml)${NC}"
+    fi
+    select_uac_xml
+    select_uas_xml
+    echo -e "  Scenarios: UAC=${UAC_XML}  UAS=${UAS_XML}"
+    echo -e "${CYAN}(session-only - edit PRACK_ENABLED in sipp_config.conf to persist)${NC}"
 }
 
 switch_network() {
@@ -927,7 +1021,7 @@ sync_to_peer() {
     validate_peer_target "${pip}" "${pdir}" || return 1
 
     # Include scripts, configs, python tools, and scenario XMLs (exclude node-specific CSVs)
-    local files="sipp_config.conf sipp_manager.sh oxe_remote.py sync_watcher.py create_sip_users.sh delete_sip_users.sh REGISTER.xml REGISTER_Caller.xml REGISTER_Called.xml INVITE_Caller.xml INVITE_Caller_publish.xml INVITE_Called.xml"
+    local files="sipp_config.conf sipp_manager.sh oxe_remote.py sync_watcher.py create_sip_users.sh delete_sip_users.sh REGISTER.xml REGISTER_Caller.xml REGISTER_Called.xml REGISTER_Auth.xml INVITE_Caller.xml INVITE_Caller_publish.xml INVITE_Caller_Auth.xml INVITE_Caller_PRACK.xml INVITE_Called.xml INVITE_Called_PRACK.xml"
 
     local synced=0
     local failed=0
@@ -1199,6 +1293,9 @@ show_menu() {
     echo -e " 14) Delete Users on OXE"
     echo -e " --- Peer Sync ---"
     echo -e " 15) Sync / Auto-sync to Peer"
+    echo -e " --- SIP Protocol Hardening ---"
+    echo -e " 16) Toggle Authentication[current: ${AUTH_ENABLED}]  (401/407 digest challenge)"
+    echo -e " 17) Toggle PRACK / 100rel[current: ${PRACK_ENABLED}]  (100rel provisional reliability)"
     echo -e "  0) Exit"
     echo -e "${BOLD}==========================================${NC}"
     echo ""
@@ -1229,6 +1326,8 @@ while true; do
         13) create_oxe_users ;;
         14) delete_oxe_users ;;
         15) manage_sync ;;
+        16) toggle_auth ;;
+        17) toggle_prack ;;
         0)  echo -e "${GREEN}Bye!${NC}"; exit 0 ;;
         *)  echo -e "${RED}Invalid option.${NC}" ;;
     esac
