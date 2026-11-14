@@ -2,19 +2,27 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 <!--
   INVITE_Called_PRACK.xml
-  Reliable Provisional Response (PRACK / 100rel) UAS Scenario for Phase 3A.
+  Reliable Provisional Response (PRACK / 100rel) UAS Scenario for Phase 3A Remediation.
 
   Responds to incoming INVITE with 183 Session Progress containing:
     - Require: 100rel
     - RSeq: 101
-  Receives and validates incoming PRACK request.
-  Responds 200 OK to PRACK.
-  Subsequently answers the call with 200 OK, receives ACK, receives BYE, and sends 200 OK.
+    - Preserves upstream proxy Record-Route headers from incoming INVITE (RFC 3261 Section 12.1.1)
+  Receives incoming PRACK request and responds 200 OK.
+  Subsequently answers the call with 200 OK:
+    - Mirrors exact incoming INVITE CSeq in Step 2 (183) and Step 5 (200 OK), avoiding corruption from intervening PRACK.
+    - Preserves exact incoming Record-Route in both provisional (183) and final (200 OK) responses.
+  Receives ACK, receives BYE, and sends 200 OK to BYE.
 -->
 <scenario name="INVITE_Called_PRACK">
 
   <!-- Step 1: Receive incoming INVITE -->
   <recv request="INVITE" crlf="true">
+    <action>
+      <ereg regexp="[0-9]+[ ]+[A-Z]+" search_in="hdr" header="CSeq:" assign_to="1"/>
+      <assignstr assign_to="2" value=""/>
+      <ereg regexp="Record-Route:[^\r\n]+" search_in="msg" assign_to="2"/>
+    </action>
   </recv>
 
   <!-- Step 2: Send Reliable 183 Session Progress (Require: 100rel, RSeq: 101) -->
@@ -25,11 +33,11 @@
       [last_From:]
       [last_To:];tag=[pid]SIPpTag[call_number]
       [last_Call-ID:]
-      [last_CSeq:]
+      CSeq: [$1]
       Require: 100rel
       RSeq: 101
+      [$2]
       Contact: <sip:[local_ip]:[local_port];transport=[transport]>
-      Record-Route: <sip:[local_ip]:[local_port];lr>
       Content-Type: application/sdp
       Content-Length: [len]
 
@@ -64,7 +72,7 @@
 
   <pause milliseconds="500"/>
 
-  <!-- Step 5: Answer call with 200 OK -->
+  <!-- Step 5: Answer call with 200 OK (mirrors exact INVITE CSeq and Record-Route) -->
   <send retrans="500">
     <![CDATA[
       SIP/2.0 200 OK
@@ -72,9 +80,9 @@
       [last_From:]
       [last_To:]
       [last_Call-ID:]
-      CSeq: 1 INVITE
+      CSeq: [$1]
+      [$2]
       Contact: <sip:[local_ip]:[local_port];transport=[transport]>
-      Record-Route: <sip:[local_ip]:[local_port];lr>
       Content-Type: application/sdp
       Content-Length: [len]
 

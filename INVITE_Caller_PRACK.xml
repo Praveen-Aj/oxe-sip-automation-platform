@@ -6,16 +6,19 @@
 
   Preserves existing OXE addressing conventions (sip:[field1]@[field2]:[field3]).
   Advertises 'Supported: 100rel' in initial INVITE.
-  Inspects received provisional response (180/183):
-    - Validates presence of 'Require: 100rel' via strcmp.
-    - Validates numeric 'RSeq' header via regex [0-9]+.
-    - Captures INVITE CSeq number.
-  When 100rel is required and RSeq is present:
-    - Constructs valid PRACK with RAck: <RSeq> <CSeq> INVITE.
-    - Awaits PRACK 200 OK before proceeding to dialog answer.
-  When 100rel is absent or unacknowledged:
-    - Cleanly bypasses PRACK transmission and awaits final 200 OK.
-  Maintains monotonic CSeq across INVITE (1), PRACK (2), and BYE (3).
+  Deterministically handles all valid provisional response sequences:
+    1. 180 without 100rel
+    2. 180 with 100rel
+    3. 183 without 100rel
+    4. 183 with 100rel
+    5. Direct 200 OK without provisional response
+    6. Repeated / alternating provisional sequences (180 -> 183 or 183 -> 180)
+
+  Validation:
+    - Matches '100rel' as a discrete option-tag token in Require: header.
+    - Strictly matches numeric RSeq value (no alphanumeric or malformed values).
+    - Monotonically manages CSeq across INVITE (1), PRACK (2), and BYE (3 if PRACK sent, 2 if direct).
+    - RAck: <RSeq> <CSeq> INVITE.
 
   CSV Fields:
     field0 = caller QMCDU (e.g. 55001)
@@ -33,7 +36,7 @@
       From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
       To: <sip:[field1]@[field2]:[field3]>
       Call-ID: [call_id]
-      CSeq: [cseq] INVITE
+      CSeq: 1 INVITE
       Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
       Max-Forwards: 70
       User-Agent: SIPP
@@ -55,91 +58,154 @@
     ]]>
   </send>
 
+  <!-- Optional 100 Trying -->
   <recv response="100" optional="true" timeout="5000">
   </recv>
 
-  <!-- Step 2: Receive 183 Session Progress with Record-Route -->
-  <recv response="183" rrs="true">
+  <!-- Optional 180 Ringing -->
+  <recv response="180" optional="true" next="1">
     <action>
       <assignstr assign_to="1" value="NONE"/>
       <assignstr assign_to="2" value="NONE"/>
-      <assignstr assign_to="3" value="1"/>
-      <!-- Check Require: 100rel -->
-      <ereg regexp="100rel" search_in="hdr" header="Require:" assign_to="1"/>
-      <!-- Extract numeric RSeq -->
-      <ereg regexp="[0-9]+" search_in="hdr" header="RSeq:" assign_to="2"/>
-      <!-- Extract INVITE CSeq number -->
-      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="3"/>
-      <!-- Compare Require with 100rel: strcmp=0 on match -->
-      <strcmp assign_to="4" variable="1" value="100rel"/>
-      <!-- Compare RSeq with NONE: strcmp=0 on NONE -->
-      <strcmp assign_to="5" variable="2" value="NONE"/>
+      <assignstr assign_to="3" value="NONE"/>
+      <!-- Require: exact option-tag token 100rel -->
+      <ereg regexp="(^|[ ,])100rel([ ,]|$)" search_in="hdr" header="Require:" assign_to="1"/>
+      <!-- RSeq: strict numeric digits only -->
+      <ereg regexp="^[ \t]*([0-9]+)[ \t]*$" search_in="hdr" header="RSeq:" assign_to="2,3"/>
+      <!-- INVITE CSeq number -->
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+      <!-- Compare with NONE: strcmp=0 if equal, non-zero if different -->
+      <strcmp assign_to="4" variable="1" value="NONE"/>
+      <strcmp assign_to="5" variable="3" value="NONE"/>
     </action>
   </recv>
 
-  <!-- If 183 was received, evaluate 100rel & RSeq -->
-  <!-- If Require != 100rel (var 4 != 0), jump to label 1 (skip PRACK) -->
-  <nop test="4" next="1"/>
-  <!-- If RSeq != NONE (var 5 != 0), jump to label 2 (send PRACK) -->
-  <nop test="5" next="2"/>
-  <!-- Fallthrough: jump to label 1 (skip PRACK) -->
-  <nop next="1"/>
-
-  <!-- LABEL 2: Transmit PRACK for Reliable Provisional -->
-  <label id="2"/>
-  <send>
-    <![CDATA[
-      PRACK [next_url] SIP/2.0
-      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
-      [last_To:]
-      Call-ID: [call_id]
-      CSeq: [cseq] PRACK
-      RAck: [$2] [$3] INVITE
-      [routes]
-      Max-Forwards: 70
-      User-Agent: SIPP
-      Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
-      Content-Length: 0
-    ]]>
-  </send>
-
-  <!-- Receive 200 OK for PRACK -->
-  <recv response="200" timeout="5000">
+  <!-- Optional 183 Session Progress (if 180 not received) -->
+  <recv response="183" optional="true" next="6">
+    <action>
+      <assignstr assign_to="1" value="NONE"/>
+      <assignstr assign_to="2" value="NONE"/>
+      <assignstr assign_to="3" value="NONE"/>
+      <!-- Require: exact option-tag token 100rel -->
+      <ereg regexp="(^|[ ,])100rel([ ,]|$)" search_in="hdr" header="Require:" assign_to="1"/>
+      <!-- RSeq: strict numeric digits only -->
+      <ereg regexp="^[ \t]*([0-9]+)[ \t]*$" search_in="hdr" header="RSeq:" assign_to="2,3"/>
+      <!-- INVITE CSeq number -->
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+      <!-- Compare with NONE: strcmp=0 if equal, non-zero if different -->
+      <strcmp assign_to="4" variable="1" value="NONE"/>
+      <strcmp assign_to="5" variable="3" value="NONE"/>
+    </action>
   </recv>
 
-  <!-- Receive final 200 OK for INVITE -->
-  <recv response="200" timeout="30000" rrs="true">
+  <!-- Direct 200 OK (if neither 180 nor 183 was received) -->
+  <recv response="200" timeout="30000" next="12">
+    <action>
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+    </action>
   </recv>
 
-  <send>
-    <![CDATA[
-      ACK [next_url] SIP/2.0
-      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
-      [last_To:]
-      Call-ID: [call_id]
-      CSeq: [$3] ACK
-      [routes]
-      Max-Forwards: 70
-      User-Agent: SIPP
-      Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
-      Content-Length: 0
-    ]]>
-  </send>
-  <!-- Jump to dialog termination -->
-  <nop next="3"/>
-
-  <!-- LABEL 1: Unreliable Provisional Flow (PRACK Skipped) -->
+  <!-- ==================== 180 EVALUATION ==================== -->
+  <!-- LABEL 1: Check if 180 Require matched -->
   <label id="1"/>
-  <!-- Optional 180 Ringing if 183 was not received or was unreliable -->
-  <recv response="180" optional="true" timeout="5000">
+  <nop test="4" next="2"/>
+  <nop next="5"/>
+
+  <!-- LABEL 2: 180 Require matched, check if RSeq matched -->
+  <label id="2"/>
+  <nop test="5" next="3"/>
+  <nop next="5"/>
+
+  <!-- LABEL 3: Reliable 180 -> Send PRACK -->
+  <label id="3"/>
+  <send>
+    <![CDATA[
+      PRACK sip:[field1]@[field2]:[field3] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: 2 PRACK
+      RAck: [$3] [$7] INVITE
+      Max-Forwards: 70
+      User-Agent: SIPP
+      Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+  <nop next="4"/>
+
+  <!-- LABEL 4: Await 200 OK after Reliable 180 PRACK -->
+  <label id="4"/>
+  <recv response="183" optional="true" timeout="5000"/>
+  <recv response="200" timeout="30000" next="11">
+    <action>
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+    </action>
   </recv>
 
-  <!-- Direct or standard 200 OK for INVITE -->
-  <recv response="200" timeout="30000">
+  <!-- LABEL 5: Await 200 OK after Unreliable 180 (no PRACK) -->
+  <label id="5"/>
+  <recv response="183" optional="true" timeout="5000"/>
+  <recv response="200" timeout="30000" next="12">
+    <action>
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+    </action>
   </recv>
 
+  <!-- ==================== 183 EVALUATION ==================== -->
+  <!-- LABEL 6: Check if 183 Require matched -->
+  <label id="6"/>
+  <nop test="4" next="7"/>
+  <nop next="10"/>
+
+  <!-- LABEL 7: 183 Require matched, check if RSeq matched -->
+  <label id="7"/>
+  <nop test="5" next="8"/>
+  <nop next="10"/>
+
+  <!-- LABEL 8: Reliable 183 -> Send PRACK -->
+  <label id="8"/>
+  <send>
+    <![CDATA[
+      PRACK sip:[field1]@[field2]:[field3] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: 2 PRACK
+      RAck: [$3] [$7] INVITE
+      Max-Forwards: 70
+      User-Agent: SIPP
+      Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+    ]]>
+  </send>
+  <recv response="200" timeout="5000"/>
+  <nop next="9"/>
+
+  <!-- LABEL 9: Await 200 OK after Reliable 183 PRACK -->
+  <label id="9"/>
+  <recv response="180" optional="true" timeout="5000"/>
+  <recv response="200" timeout="30000" next="11">
+    <action>
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+    </action>
+  </recv>
+
+  <!-- LABEL 10: Await 200 OK after Unreliable 183 (no PRACK) -->
+  <label id="10"/>
+  <recv response="180" optional="true" timeout="5000"/>
+  <recv response="200" timeout="30000" next="12">
+    <action>
+      <ereg regexp="[0-9]+" search_in="hdr" header="CSeq:" assign_to="7"/>
+    </action>
+  </recv>
+
+  <!-- ==================== CALL COMPLETION ==================== -->
+  <!-- LABEL 11: Reliable Call Established (PRACK was sent with CSeq 2 -> BYE is CSeq 3) -->
+  <label id="11"/>
   <send>
     <![CDATA[
       ACK sip:[field1]@[field2]:[field3] SIP/2.0
@@ -147,34 +213,67 @@
       From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
       [last_To:]
       Call-ID: [call_id]
-      CSeq: 1 ACK
+      CSeq: [$7] ACK
       Max-Forwards: 70
       User-Agent: SIPP
       Content-Length: 0
     ]]>
   </send>
 
-  <!-- LABEL 3: Dialog Active & BYE Termination -->
-  <label id="3"/>
   <pause milliseconds="3000"/>
 
   <send>
     <![CDATA[
-      BYE [next_url] SIP/2.0
+      BYE sip:[field1]@[field2]:[field3] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
       From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
       [last_To:]
       Call-ID: [call_id]
-      CSeq: [cseq] BYE
-      [routes]
+      CSeq: 3 BYE
       Max-Forwards: 70
       User-Agent: SIPP
       Content-Length: 0
     ]]>
   </send>
 
-  <recv response="200" timeout="5000">
-  </recv>
+  <recv response="200" timeout="5000"/>
+  <nop next="13"/>
+
+  <!-- LABEL 12: Unreliable / Direct Call Established (No PRACK sent -> BYE is CSeq 2) -->
+  <label id="12"/>
+  <send>
+    <![CDATA[
+      ACK sip:[field1]@[field2]:[field3] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: [$7] ACK
+      Max-Forwards: 70
+      User-Agent: SIPP
+      Content-Length: 0
+    ]]>
+  </send>
+
+  <pause milliseconds="3000"/>
+
+  <send>
+    <![CDATA[
+      BYE sip:[field1]@[field2]:[field3] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: 2 BYE
+      Max-Forwards: 70
+      User-Agent: SIPP
+      Content-Length: 0
+    ]]>
+  </send>
+
+  <recv response="200" timeout="5000"/>
+
+  <label id="13"/>
 
   <ResponseTimeRepartition value="100, 200, 300, 400, 500, 600, 700, 800, 900, 1000"/>
   <CallLengthRepartition value="10000, 15000, 20000"/>

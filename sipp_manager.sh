@@ -34,6 +34,7 @@ UAC_XML_PLAIN="INVITE_Caller.xml"
 UAC_XML_PUBLISH="INVITE_Caller_publish.xml"
 UAC_XML_AUTH="INVITE_Caller_Auth.xml"
 UAC_XML_PRACK="INVITE_Caller_PRACK.xml"
+UAC_XML_AUTH_PRACK="INVITE_Caller_Auth_PRACK.xml"
 UAC_XML="${UAC_XML_PLAIN}"   # resolved dynamically by select_uac_xml()
 
 UAS_XML_PLAIN="INVITE_Called.xml"
@@ -453,7 +454,9 @@ trace_suffix() {
 
 select_uac_xml() {
     # Pick the CALLER-side scenario based on PRACK_ENABLED, AUTH_ENABLED, and PUBLISH_ENABLED.
-    if [ "${PRACK_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAC_XML_PRACK}" ]; then
+    if [ "${PRACK_ENABLED}" = "1" ] && [ "${AUTH_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAC_XML_AUTH_PRACK}" ]; then
+        UAC_XML="${UAC_XML_AUTH_PRACK}"
+    elif [ "${PRACK_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAC_XML_PRACK}" ]; then
         UAC_XML="${UAC_XML_PRACK}"
     elif [ "${AUTH_ENABLED}" = "1" ] && [ -f "${SCRIPT_DIR}/${UAC_XML_AUTH}" ]; then
         UAC_XML="${UAC_XML_AUTH}"
@@ -510,6 +513,15 @@ show_config() {
     echo -e "  PUBLISH:     ${publish_state}"
     echo -e "  Auth (SIP):  ${auth_state}"
     echo -e "  PRACK/100rel:${prack_state}"
+    local mode_desc="BASELINE OXE"
+    if [ "${AUTH_ENABLED}" = "1" ] && [ "${PRACK_ENABLED}" = "1" ]; then
+        mode_desc="COMBINED (Authentication + PRACK/100rel)"
+    elif [ "${AUTH_ENABLED}" = "1" ]; then
+        mode_desc="AUTHENTICATION (401/407 Challenge)"
+    elif [ "${PRACK_ENABLED}" = "1" ]; then
+        mode_desc="PRACK / 100rel (Provisional Reliability)"
+    fi
+    echo -e "  Mode:        ${BOLD}${GREEN}${mode_desc}${NC}"
     echo -e "  Scenarios:   REG=${REG_XML}  UAC=${UAC_XML}  UAS=${UAS_XML}"
     echo -e "  CSVs:        ${REG_CALLER_CSV} / ${REG_CALLED_CSV} / ${CALL_CALLER_CSV}"
     echo -e "  Peer Dir:    $(peer_script_dir)"
@@ -841,6 +853,9 @@ toggle_prack() {
     select_uas_xml
     echo -e "  Scenarios: UAC=${UAC_XML}  UAS=${UAS_XML}"
     echo -e "${CYAN}(session-only - edit PRACK_ENABLED in sipp_config.conf to persist)${NC}"
+    if [ -f "${REG_CALLER_CSV}" ] || [ -f "${REG_CALLED_CSV}" ] || [ -f "${CALL_CALLER_CSV}" ]; then
+        generate_csvs
+    fi
 }
 
 switch_network() {
@@ -1021,7 +1036,7 @@ sync_to_peer() {
     validate_peer_target "${pip}" "${pdir}" || return 1
 
     # Include scripts, configs, python tools, and scenario XMLs (exclude node-specific CSVs)
-    local files="sipp_config.conf sipp_manager.sh oxe_remote.py sync_watcher.py create_sip_users.sh delete_sip_users.sh REGISTER.xml REGISTER_Caller.xml REGISTER_Called.xml REGISTER_Auth.xml INVITE_Caller.xml INVITE_Caller_publish.xml INVITE_Caller_Auth.xml INVITE_Caller_PRACK.xml INVITE_Called.xml INVITE_Called_PRACK.xml"
+    local files="sipp_config.conf sipp_manager.sh oxe_remote.py sync_watcher.py create_sip_users.sh delete_sip_users.sh REGISTER.xml REGISTER_Caller.xml REGISTER_Called.xml REGISTER_Auth.xml INVITE_Caller.xml INVITE_Caller_publish.xml INVITE_Caller_Auth.xml INVITE_Caller_PRACK.xml INVITE_Caller_Auth_PRACK.xml INVITE_Called.xml INVITE_Called_PRACK.xml"
 
     local synced=0
     local failed=0
