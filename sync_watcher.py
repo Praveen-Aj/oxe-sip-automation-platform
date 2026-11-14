@@ -26,7 +26,7 @@ def get_mtimes(directory, extensions=None):
     """Get modification times for all relevant files."""
     mtimes = {}
     if extensions is None:
-        extensions = ('.sh', '.conf', '.py')
+        extensions = ('.sh', '.conf', '.py', '.xml')
     for f in os.listdir(directory):
         if any(f.endswith(ext) for ext in extensions):
             path = os.path.join(directory, f)
@@ -36,9 +36,9 @@ def get_mtimes(directory, extensions=None):
 
 
 def rsync_file(filepath, peer_ip, remote_dir):
-    """Rsync a single file to the peer."""
+    """Rsync a single file to the peer with atomic updates and conflict protection."""
     cmd = [
-        'rsync', '-az', '--timeout=10',
+        'rsync', '-azu', '--delay-updates', '--timeout=10',
         '-e', 'ssh -o StrictHostKeyChecking=no -o BatchMode=yes',
         filepath,
         'root@%s:%s/' % (peer_ip, remote_dir)
@@ -75,32 +75,41 @@ def main():
         f.write(str(os.getpid()))
 
     prev_mtimes = get_mtimes(local_dir)
+    lockfile = os.path.join(local_dir, '.sync.lock')
 
-    while running:
-        time.sleep(interval)
-        if not running:
-            break
+    try:
+        while running:
+            time.sleep(interval)
+            if not running:
+                break
 
-        curr_mtimes = get_mtimes(local_dir)
-        changed = []
+            # Skip if active sync lock exists (manual sync or another process active)
+            if os.path.exists(lockfile):
+                continue
 
-        for fname, mtime in curr_mtimes.items():
-            if fname not in prev_mtimes or prev_mtimes[fname] < mtime:
-                changed.append(fname)
+            curr_mtimes = get_mtimes(local_dir)
+            changed = []
 
-        if changed:
-            for fname in changed:
-                filepath = os.path.join(local_dir, fname)
-                ok = rsync_file(filepath, peer_ip, remote_dir)
-                status = 'OK' if ok else 'FAIL'
-                print('[sync_watcher] %s -> %s [%s]' % (fname, peer_ip, status))
+            for fname, mtime in curr_mtimes.items():
+                if fname not in prev_mtimes or prev_mtimes[fname] < mtime:
+                    changed.append(fname)
 
-        prev_mtimes = curr_mtimes
+            if changed:
+                for fname in changed:
+                    filepath = os.path.join(local_dir, fname)
+                    ok = rsync_file(filepath, peer_ip, remote_dir)
+                    status = 'OK' if ok else 'FAIL'
+                    print('[sync_watcher] %s -> %s [%s]' % (fname, peer_ip, status))
 
-    # Cleanup PID file
-    if os.path.exists(pidfile):
-        os.remove(pidfile)
-    print('[sync_watcher] Stopped.')
+            prev_mtimes = curr_mtimes
+    finally:
+        # Cleanup PID file reliably on any exit
+        if os.path.exists(pidfile):
+            try:
+                os.remove(pidfile)
+            except OSError:
+                pass
+        print('[sync_watcher] Stopped.')
 
 
 if __name__ == '__main__':

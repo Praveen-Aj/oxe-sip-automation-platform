@@ -24,8 +24,10 @@ CONFIG_FILE="${SCRIPT_DIR}/sipp_config.conf"
 ROLE=""
 
 # ---- XML scenario file names ----
+REG_XML_UNIFIED="REGISTER.xml"
 REG_CALLER_XML="REGISTER_Caller.xml"
 REG_CALLED_XML="REGISTER_Called.xml"
+REG_XML="${REG_XML_UNIFIED}"   # resolved dynamically by select_reg_xml()
 UAC_XML_PLAIN="INVITE_Caller.xml"
 UAC_XML_PUBLISH="INVITE_Caller_publish.xml"
 UAC_XML="${UAC_XML_PLAIN}"   # resolved dynamically by select_uac_xml()
@@ -301,7 +303,11 @@ load_config() {
     OXE_SCRIPT_PATH="${OXE_SCRIPT_PATH:-/tmpd/sipp_tools}"
     BATCH_SIZE="${BATCH_SIZE:-100}"
     BATCH_PAUSE="${BATCH_PAUSE:-5}"
+    PEER_SCRIPT_DIR="${PEER_SCRIPT_DIR:-}"
+    PEER_SCRIPT_DIR_ON_CALLER="${PEER_SCRIPT_DIR_ON_CALLER:-}"
+    PEER_SCRIPT_DIR_ON_CALLED="${PEER_SCRIPT_DIR_ON_CALLED:-}"
     select_uac_xml
+    select_reg_xml
 
     local missing=""
     for var in NETWORK OXE_PORT \
@@ -443,6 +449,19 @@ select_uac_xml() {
     fi
 }
 
+select_reg_xml() {
+    # Prefer unified REGISTER.xml; fall back to role-specific XMLs for backward compatibility
+    if [ -f "${SCRIPT_DIR}/${REG_XML_UNIFIED}" ]; then
+        REG_XML="${REG_XML_UNIFIED}"
+    elif [ "$ROLE" = "CALLER" ] && [ -f "${SCRIPT_DIR}/${REG_CALLER_XML}" ]; then
+        REG_XML="${REG_CALLER_XML}"
+    elif [ "$ROLE" = "CALLED" ] && [ -f "${SCRIPT_DIR}/${REG_CALLED_XML}" ]; then
+        REG_XML="${REG_CALLED_XML}"
+    else
+        REG_XML="${REG_XML_UNIFIED}"
+    fi
+}
+
 show_config() {
     local trace_state="OFF"
     [ "${DEBUG_TRACE}" = "1" ] && trace_state="ON  (${TRACE_FLAGS})"
@@ -459,8 +478,10 @@ show_config() {
     echo -e "  Transport:   ${TRANSPORT}   (XMLs use [transport])"
     echo -e "  Debug trace: ${trace_state}"
     echo -e "  PUBLISH:     ${publish_state}"
+    echo -e "  REG XML:     ${REG_XML}"
     echo -e "  UAC XML:     ${UAC_XML}"
     echo -e "  CSVs:        ${REG_CALLER_CSV} / ${REG_CALLED_CSV} / ${CALL_CALLER_CSV}"
+    echo -e "  Peer Dir:    $(peer_script_dir)"
     echo -e "  --- OXE User Management ---"
     echo -e "  Access:      ${OXE_ACCESS}   (user: ${OXE_MTCL_USER})"
     echo -e "  Script path: ${OXE_SCRIPT_PATH}"
@@ -515,19 +536,19 @@ generate_csvs() {
 run_register() {
     echo -e "${YELLOW}Starting Registration (${ROLE} / ${NETWORK})...${NC}"
     verify_bind_ip
+    select_reg_xml
     local trace; trace=$(trace_suffix)
     local sipp_bin; sipp_bin=$(resolve_sipp)
     check_file "$sipp_bin" || return 1
+    check_file "${SCRIPT_DIR}/${REG_XML}" || check_file "${REG_XML}" || return 1
 
     local cmd=""
     if [ "$ROLE" = "CALLER" ]; then
-        check_file "${REG_CALLER_XML}" || return 1
         [ ! -f "${REG_CALLER_CSV}" ] && { echo -e "${RED}CSV missing. Generating...${NC}"; generate_csvs; }
-        cmd="${sipp_bin} -sf ${REG_CALLER_XML} -inf ${REG_CALLER_CSV} -i ${CALLER_IP} -p ${CALLER_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} ${OXE_IP}:${OXE_PORT}"
+        cmd="${sipp_bin} -sf ${REG_XML} -inf ${REG_CALLER_CSV} -i ${CALLER_IP} -p ${CALLER_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} ${OXE_IP}:${OXE_PORT}"
     elif [ "$ROLE" = "CALLED" ]; then
-        check_file "${REG_CALLED_XML}" || return 1
         [ ! -f "${REG_CALLED_CSV}" ] && { echo -e "${RED}CSV missing. Generating...${NC}"; generate_csvs; }
-        cmd="${sipp_bin} -sf ${REG_CALLED_XML} -inf ${REG_CALLED_CSV} -i ${CALLED_IP} -p ${CALLED_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} ${OXE_IP}:${OXE_PORT}"
+        cmd="${sipp_bin} -sf ${REG_XML} -inf ${REG_CALLED_CSV} -i ${CALLED_IP} -p ${CALLED_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} ${OXE_IP}:${OXE_PORT}"
     fi
 
     echo -e "${CYAN}Command:${NC}"
@@ -595,21 +616,21 @@ run_register_bg() {
     local trace; trace=$(trace_suffix)
     local sipp_bin; sipp_bin=$(resolve_sipp)
     check_file "$sipp_bin" || return 1
+    select_reg_xml
+    check_file "${SCRIPT_DIR}/${REG_XML}" || check_file "${REG_XML}" || return 1
 
     local pid=""
     if [ "$ROLE" = "CALLER" ]; then
-        check_file "${REG_CALLER_XML}" || return 1
         [ ! -f "${REG_CALLER_CSV}" ] && generate_csvs
-        local cmd="${sipp_bin} -sf ${REG_CALLER_XML} -inf ${REG_CALLER_CSV} -i ${CALLER_IP} -p ${CALLER_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} -bg ${OXE_IP}:${OXE_PORT}"
+        local cmd="${sipp_bin} -sf ${REG_XML} -inf ${REG_CALLER_CSV} -i ${CALLER_IP} -p ${CALLER_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} -bg ${OXE_IP}:${OXE_PORT}"
         pid=$(launch_sipp_bg "REGISTER_Caller" "$cmd")
         local rc=$?
         [ $rc -ne 0 ] && return $rc
         echo "$pid"
         return 0
     elif [ "$ROLE" = "CALLED" ]; then
-        check_file "${REG_CALLED_XML}" || return 1
         [ ! -f "${REG_CALLED_CSV}" ] && generate_csvs
-        local cmd="${sipp_bin} -sf ${REG_CALLED_XML} -inf ${REG_CALLED_CSV} -i ${CALLED_IP} -p ${CALLED_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} -bg ${OXE_IP}:${OXE_PORT}"
+        local cmd="${sipp_bin} -sf ${REG_XML} -inf ${REG_CALLED_CSV} -i ${CALLED_IP} -p ${CALLED_REG_PORT} -t ${TRANSPORT} -m ${REG_COUNT} -r ${REG_RATE} -aa ${trace} -bg ${OXE_IP}:${OXE_PORT}"
         pid=$(launch_sipp_bg "REGISTER_Called" "$cmd")
         local rc=$?
         [ $rc -ne 0 ] && return $rc
@@ -860,11 +881,42 @@ peer_ip() {
 }
 
 peer_script_dir() {
+    local target_dir=""
     if [ "$ROLE" = "CALLER" ]; then
-        echo "/root/praveen/SIPP/SIPP_CALLED_Scripts"
+        target_dir="${PEER_SCRIPT_DIR_ON_CALLED:-${PEER_SCRIPT_DIR}}"
     else
-        echo "/root/praveen/SIPP/SIPP_CALLER_Scripts"
+        target_dir="${PEER_SCRIPT_DIR_ON_CALLER:-${PEER_SCRIPT_DIR}}"
     fi
+
+    # Fallback to local SCRIPT_DIR if not configured
+    if [ -z "$target_dir" ]; then
+        target_dir="${SCRIPT_DIR}"
+    fi
+    echo "$target_dir"
+}
+
+validate_peer_target() {
+    local pip="$1"
+    local pdir="$2"
+
+    if [ -z "$pip" ]; then
+        echo -e "${RED}ERROR: Peer IP address is not defined.${NC}"
+        return 1
+    fi
+    if [ -z "$pdir" ]; then
+        echo -e "${RED}ERROR: Peer target directory is not defined.${NC}"
+        return 1
+    fi
+
+    # Test peer directory existence or create it via SSH (3s timeout)
+    local ssh_test="ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=3 root@${pip}"
+    if ! ${ssh_test} "mkdir -p '${pdir}'" 2>/dev/null; then
+        echo -e "${RED}ERROR: Cannot reach root@${pip} via SSH or create directory '${pdir}'.${NC}"
+        echo -e "${RED}       Ensure network reachability and SSH key authentication.${NC}"
+        log_msg "ERROR" "Failed SSH check to root@${pip}:${pdir}"
+        return 1
+    fi
+    return 0
 }
 
 sync_to_peer() {
@@ -872,14 +924,22 @@ sync_to_peer() {
     local pdir; pdir=$(peer_script_dir)
     echo -e "${YELLOW}Syncing to peer: root@${pip}:${pdir}/${NC}"
 
-    # Sync only common files (scripts, config, python) — NOT .xml/.csv (role-specific)
-    local files="sipp_config.conf sipp_manager.sh oxe_remote.py sync_watcher.py create_sip_users.sh delete_sip_users.sh"
+    validate_peer_target "${pip}" "${pdir}" || return 1
+
+    # Include scripts, configs, python tools, and scenario XMLs (exclude node-specific CSVs)
+    local files="sipp_config.conf sipp_manager.sh oxe_remote.py sync_watcher.py create_sip_users.sh delete_sip_users.sh REGISTER.xml REGISTER_Caller.xml REGISTER_Called.xml INVITE_Caller.xml INVITE_Caller_publish.xml INVITE_Called.xml"
 
     local synced=0
     local failed=0
+
+    # Acquire lock on peer to prevent collision with auto-sync or other transfers
+    ssh -o StrictHostKeyChecking=no -o BatchMode=yes "root@${pip}" "touch '${pdir}/.sync.lock'" 2>/dev/null
+
     for f in $files; do
         if [ -f "${SCRIPT_DIR}/${f}" ]; then
-            rsync -az -e 'ssh -o StrictHostKeyChecking=no -o BatchMode=yes' \
+            # -a: archive mode, -z: compress, -u: skip if newer on receiver, --delay-updates: atomic transfe
+            rsync -azu --delay-updates --timeout=10 \
+                -e 'ssh -o StrictHostKeyChecking=no -o BatchMode=yes' \
                 "${SCRIPT_DIR}/${f}" "root@${pip}:${pdir}/" 2>/dev/null
             if [ $? -eq 0 ]; then
                 synced=$((synced + 1))
@@ -890,10 +950,15 @@ sync_to_peer() {
         fi
     done
 
+    # Release lock on pee
+    ssh -o StrictHostKeyChecking=no -o BatchMode=yes "root@${pip}" "rm -f '${pdir}/.sync.lock'" 2>/dev/null
+
     if [ $failed -eq 0 ]; then
-        echo -e "${GREEN}  [OK] ${synced} files synced to ${pip}.${NC}"
+        echo -e "${GREEN}  [OK] ${synced} file(s) synced to root@${pip}:${pdir}/${NC}"
+        log_msg "INFO" "Manual sync to root@${pip}:${pdir}/ completed (${synced} files)"
     else
         echo -e "${RED}  ${failed} file(s) failed, ${synced} synced.${NC}"
+        log_msg "WARN" "Manual sync to root@${pip}:${pdir}/ had ${failed} failures"
     fi
 }
 
@@ -909,12 +974,15 @@ sync_watcher_start() {
 
     local pip; pip=$(peer_ip)
     local pdir; pdir=$(peer_script_dir)
+    validate_peer_target "${pip}" "${pdir}" || return 1
+
     echo -e "${GREEN}Starting auto-sync watcher...${NC}"
     nohup python3 "${SCRIPT_DIR}/sync_watcher.py" "${pip}" "${SCRIPT_DIR}" "${pdir}" 5 \
         > "${SCRIPT_DIR}/.sync_watcher.log" 2>&1 &
     sleep 1
     if [ -f "$pidfile" ]; then
-        echo -e "${GREEN}  [OK] Watcher running (PID $(cat $pidfile)), syncing to ${pip} every 5s.${NC}"
+        echo -e "${GREEN}  [OK] Watcher running (PID $(cat $pidfile)), syncing to ${pip}:${pdir} every 5s.${NC}"
+        log_msg "INFO" "Auto-sync watcher started with PID $(cat $pidfile) targeting ${pip}:${pdir}"
     else
         echo -e "${RED}  FAILED to start watcher. Check .sync_watcher.log${NC}"
     fi
@@ -982,7 +1050,9 @@ sync_specific_file() {
     fi
 
     echo -e "${YELLOW}  Syncing ${target} -> root@${pip}:${pdir}/${NC}"
-    rsync -az -e 'ssh -o StrictHostKeyChecking=no -o BatchMode=yes' \
+    validate_peer_target "${pip}" "${pdir}" || return 1
+    rsync -azu --delay-updates --timeout=10 -e 'ssh -o StrictHostKeyChecking=no -o BatchMode=yes' \
+        "${SCRIPT_DIR}/${target}" "root@${pip}:${pdir}/" 2>/dev/null
         "${SCRIPT_DIR}/${target}" "root@${pip}:${pdir}/" 2>/dev/null
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}  [OK] ${target} synced to ${pip}.${NC}"

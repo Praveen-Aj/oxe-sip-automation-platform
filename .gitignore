@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.sync_watcher.pid
+.sync_watcher.log
+.sipp_managed.pids
+.sync.lock
+sipp_execution.log

@@ -22,11 +22,14 @@ Configuration used: `NETWORK=LAN`, `TRANSPORT=u1`, `DEBUG_TRACE=0`. XMLs use `[t
 
 Which network is used per run is driven by `NETWORK=LAN|WAN` in `sipp_config.conf` (or via **menu option 9** at runtime). CSV files are suffixed `_<NETWORK>_node<N>` where `<N>` is the last octet of the active OXE IP (e.g. `172.19.5.121` → `node121`, `192.168.1.51` → `node51`) so CSVs for different networks *and* different testbed nodes coexist on disk without collision.
 
-## Script paths on the servers
+## Script paths & Peer Deployment
 
+Paths are configurable in `sipp_config.conf` via `PEER_SCRIPT_DIR` (or `PEER_SCRIPT_DIR_ON_CALLER` / `PEER_SCRIPT_DIR_ON_CALLED`). If left unset, the manager dynamically uses the current script directory (`$SCRIPT_DIR`).
+
+Reference testbed deployment paths:
 ```
-CALLER  -> /root/praveen/SIPP/SIPP_CALLER_Scripts
-CALLED  -> /root/praveen/SIPP/SIPP_CALLED_Scripts
+CALLER  -> /root/praveen/SIPP/SIPP_CALLER_Scripts  (or custom directory)
+CALLED  -> /root/praveen/SIPP/SIPP_CALLED_Scripts  (or custom directory)
 ```
 
 ## User ranges (current config)
@@ -42,16 +45,22 @@ CALLED  -> /root/praveen/SIPP/SIPP_CALLED_Scripts
 
 | File | Purpose | Deploy on |
 |------|---------|-----------|
-| `sipp_config.conf`      | Single source of truth (IPs, ranges, ports, transport, trace) | both |
-| `sipp_manager.sh`       | Menu-driven launcher | both |
-| `REGISTER_Caller.xml`   | REGISTER UAC scenario | CALLER |
-| `REGISTER_Called.xml`   | REGISTER UAC scenario | CALLED |
+| `sipp_config.conf`      | Single source of truth (IPs, ranges, ports, transport, peer dirs) | both |
+| `sipp_manager.sh`       | Menu-driven launcher & orchestrator | both |
+| `REGISTER.xml`          | Unified REGISTER UAC scenario (used by both sides) | both |
+| `REGISTER_Caller.xml`   | Legacy REGISTER UAC scenario (retained for backward compatibility) | CALLER |
+| `REGISTER_Called.xml`   | Legacy REGISTER UAC scenario (retained for backward compatibility) | CALLED |
 | `INVITE_Caller.xml`         | Basic-call UAC (INVITE → ACK → pause → BYE → 200) | CALLER |
 | `INVITE_Caller_publish.xml` | Same as above, plus a PUBLISH (vq-rtcpxr, MOS 4.2) to OXE after BYE — for VoIP-Metrics-Collector testing. Selected when `PUBLISH_ENABLED=1` (menu **11**). | CALLER |
 | `INVITE_Called.xml`         | Basic-call UAS (180 → 200+SDP → BYE 200) — no CSV needed | CALLED |
+| `oxe_remote.py`         | OXE SSH/telnet provisioning agent | both |
+| `sync_watcher.py`       | Auto-sync daemon syncing scripts, configs, and XMLs | both |
+| `create_sip_users.sh`   | OXE batch subscriber creation tool | both |
+| `delete_sip_users.sh`   | OXE batch subscriber deletion tool | both |
 | `REGISTER_Caller_{LAN,WAN}_node<N>.csv` | Caller registration data, per network | CALLER (generated) |
 | `REGISTER_Called_{LAN,WAN}_node<N>.csv` | Called registration data, per network | CALLED (generated) |
 | `INVITE_Caller_{LAN,WAN}_node<N>.csv`   | Caller ↔ callee call pairs, per network | CALLER (generated) |
+| `archive/`              | Historical/reference assets (`INVITE.xml`, `delete_batch.py`, `caller_invite.csv`, `Motor_40884_finalHF.txt`) | reference |
 
 All XMLs use SIPp's `[transport]` placeholder in `Via:` and `Contact: transport=`, so the actual protocol follows the `TRANSPORT` value in the config (`u1` UDP / `t1` TCP / `l1` TLS / …) — no XML edits needed to switch transport.
 
@@ -157,8 +166,8 @@ To:    <sip:[field0]@[field2]:[field3]>          ← user@OXE:port
 Call-ID: [call_id]                                ← same as the INVITE
 CSeq:  3 PUBLISH
 Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
-Event: vq-rtcpxr
-Content-Type: application/vq-rtcpxr
+Event: vq-rtcpx
+Content-Type: application/vq-rtcpx
 
 <VoIPMetrics>
   <CallID>...</CallID>
@@ -281,7 +290,7 @@ The selected `NETWORK`'s IP isn't up on this server. Either bring the interface 
 **SIPp binds but no traffic reaches OXE**
 Confirm OXE is reachable on the network you selected:
 ```bash
-ping <OXE_IP>            # from the SIPp server
+ping <OXE_IP>            # from the SIPp serve
 ```
 Then check the trunk config on OXE side (routing table, SIP profile, ACL for the SIPp IP).
 
@@ -306,23 +315,37 @@ OXE keys SIP subscribers by `<num>@<provisioned IP>`, where the provisioned IP i
 
 ## File deployment cheatsheet
 
-**CALLER host** (`/root/praveen/SIPP/SIPP_CALLER_Scripts/`):
+**Common files on BOTH hosts:**
 ```
-sipp   (binary)
-sipp_config.conf
-sipp_manager.sh
-REGISTER_Caller.xml
-INVITE_Caller.xml
-INVITE_Caller_publish.xml   (only needed if you'll use PUBLISH_ENABLED=1)
+sipp                        (binary)
+sipp_config.conf            (central configuration)
+sipp_manager.sh             (menu orchestrator)
+REGISTER.xml                (unified registration scenario)
+REGISTER_Caller.xml         (legacy caller registration scenario - optional fallback)
+REGISTER_Called.xml         (legacy callee registration scenario - optional fallback)
+oxe_remote.py               (OXE provisioning agent)
+sync_watcher.py             (peer synchronization daemon)
+create_sip_users.sh         (OXE user creation script)
+delete_sip_users.sh         (OXE user deletion script)
 ```
 
-**CALLED host** (`/root/praveen/SIPP/SIPP_CALLED_Scripts/`):
+**CALLER host scenarios:**
 ```
-sipp   (binary)
-sipp_config.conf
-sipp_manager.sh
-REGISTER_Called.xml
+INVITE_Caller.xml
+INVITE_Caller_publish.xml   (only needed if you use PUBLISH_ENABLED=1)
+```
+
+**CALLED host scenarios:**
+```
 INVITE_Called.xml
+```
+
+**Archived reference assets (`archive/` folder):**
+```
+INVITE.xml                  (legacy UDP-only scenario)
+delete_batch.py             (legacy telnet script)
+caller_invite.csv           (legacy static CSV)
+Motor_40884_finalHF.txt     (OXE SIP motor reference trace)
 ```
 
 CSVs are generated locally by the manager — don't hand-copy the samples.
