@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!--
+  INVITE_Called_PRACK.xml
+  Reliable Provisional Response (PRACK / 100rel) UAS Scenario for Phase 3A Remediation.
+
+  Responds to incoming INVITE with 183 Session Progress containing:
+    - Require: 100rel
+    - RSeq: 101
+    - Preserves upstream proxy Record-Route headers from incoming INVITE (RFC 3261 Section 12.1.1)
+  Receives incoming PRACK request and responds 200 OK.
+  Subsequently answers the call with 200 OK:
+    - Mirrors exact incoming INVITE CSeq in Step 2 (183) and Step 5 (200 OK), avoiding corruption from intervening PRACK.
+    - Preserves exact incoming Record-Route in both provisional (183) and final (200 OK) responses.
+  Receives ACK, receives BYE, and sends 200 OK to BYE.
+-->
+<scenario name="INVITE_Called_PRACK">
+
+  <!-- Step 1: Receive incoming INVITE -->
+  <recv request="INVITE" crlf="true">
+    <action>
+      <ereg regexp="[0-9]+[ ]+[A-Z]+" search_in="hdr" header="CSeq:" assign_to="1"/>
+      <assignstr assign_to="2" value=""/>
+      <ereg regexp="Record-Route:[^\r\n]+" search_in="msg" assign_to="2"/>
+    </action>
+  </recv>
+
+  <!-- Step 2: Send Reliable 183 Session Progress (Require: 100rel, RSeq: 101) -->
+  <send>
+    <![CDATA[
+      SIP/2.0 183 Session Progress
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=[pid]SIPpTag[call_number]
+      [last_Call-ID:]
+      CSeq: [$1]
+      Require: 100rel
+      RSeq: 101
+      [$2]
+      Contact: <sip:[local_ip]:[local_port];transport=[transport]>
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=sipp 0 0 IN IP4 [local_ip]
+      s=SDP data
+      c=IN IP4 [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+      a=sendrecv
+    ]]>
+  </send>
+
+  <!-- Step 3: Receive PRACK request -->
+  <recv request="PRACK" timeout="5000">
+  </recv>
+
+  <!-- Step 4: Send 200 OK to PRACK -->
+  <send>
+    <![CDATA[
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Contact: <sip:[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+    ]]>
+  </send>
+
+  <pause milliseconds="500"/>
+
+  <!-- Step 5: Answer call with 200 OK (mirrors exact INVITE CSeq and Record-Route) -->
+  <send retrans="500">
+    <![CDATA[
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      CSeq: [$1]
+      [$2]
+      Contact: <sip:[local_ip]:[local_port];transport=[transport]>
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=sipp 0 0 IN IP4 [local_ip]
+      s=SDP data
+      c=IN IP4 [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+      a=sendrecv
+    ]]>
+  </send>
+
+  <!-- Step 6: Receive ACK -->
+  <recv request="ACK" timeout="5000">
+  </recv>
+
+  <!-- Step 7: Receive BYE -->
+  <recv request="BYE" timeout="10000">
+  </recv>
+
+  <!-- Step 8: Send 200 OK to BYE -->
+  <send>
+    <![CDATA[
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Contact: <sip:[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+    ]]>
+  </send>
+
+</scenario>

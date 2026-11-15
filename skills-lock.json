@@ -1,0 +1,103 @@
+{
+  "version": 2,
+  "skills": {
+    "accessibility-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/accessibility-testing/SKILL.md",
+      "computedHash": "53bd5693b2f7b6e573f6d2588ebe9f6b2a561a039dfae0fc02a3687a57ff4cc5",
+      "installMode": "copy"
+    },
+    "api-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/api-testing/SKILL.md",
+      "computedHash": "17753ea378eee41e52b0daa3ac92a70413e269ce215ee27cbfa0e68d755e048d",
+      "installMode": "copy"
+    },
+    "exploratory-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/exploratory-testing/SKILL.md",
+      "computedHash": "6eaa7e1d326161ce09b394391295652c36bc229d658a352b2e90f903d583a8bc",
+      "installMode": "copy"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "83485963700bcf11d5bf78118facb301676b69d918fee2e45a95e7f1a2840f6c",
+      "installMode": "copy"
+    },
+    "impeccable": {
+      "source": "pbakaus/impeccable",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/impeccable/SKILL.md",
+      "computedHash": "c33b2d46e00adf2896eed068c35ad5b4fb0b71e1c54232987a7dfdd1d10d5ce5",
+      "installMode": "copy"
+    },
+    "performance-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/performance-testing/SKILL.md",
+      "computedHash": "ced5ac70072731c11f1929c568cb7831db39d2bbb54118950f5a696aad1f2da9",
+      "installMode": "copy"
+    },
+    "playwright-automation": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/playwright-automation/SKILL.md",
+      "computedHash": "cb42d6a67228a5e8bbd7f0679b61014b4d1bf8e987e8fd153f4aa1767a510994",
+      "installMode": "copy"
+    },
+    "security-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/security-testing/SKILL.md",
+      "computedHash": "c1eafc066006d7f122122b140bb020ccf2ab8d0f4af5ba7d331dbb388c38ad3e",
+      "installMode": "copy"
+    },
+    "test-planning": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/test-planning/SKILL.md",
+      "computedHash": "df20261733b9ed6e0631e6037a856e7e17068f4e7106d1d66e1c88d8dcba1b8e",
+      "installMode": "copy"
+    },
+    "test-strategy": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/test-strategy/SKILL.md",
+      "computedHash": "02136ba73e4c2af061792a2e5a135711aede9be3a15f2b777049f6e6af8d51f3",
+      "installMode": "copy"
+    },
+    "unit-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/unit-testing/SKILL.md",
+      "computedHash": "5e20433f5aa1018d9283a761c6ffefa63dc771d9aa9d6fb16f01dcdfcee4c067",
+      "installMode": "copy"
+    },
+    "vercel-react-best-practices": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-best-practices/SKILL.md",
+      "computedHash": "7991ed4fbecdac23f47c1a40c243e00a212a9e7f3604db93959b3ae11dffe299",
+      "installMode": "copy"
+    },
+    "visual-testing": {
+      "source": "petrkindlmann/qa-skills",
+      "sourceType": "github",
+      "skillPath": "skills/visual-testing/SKILL.md",
+      "computedHash": "2b4f2f84e3b68b32f48a6ce993b7f88351cc0d3a1ab7ef40c1f0e73f431a01d7",
+      "installMode": "copy"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "4f68ae07187fb0d1fb78c88b503d089da4cf5a9d9625d1f2e425b1590bf96d92",
+      "installMode": "copy"
+    }
+  }
+}

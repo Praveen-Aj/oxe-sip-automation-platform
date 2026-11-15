@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!--
+  INVITE_Caller.xml
+  Reference URI convention: all identity URIs (Request-URI, From, To) use
+  <user>@<OXE_IP>:<OXE_PORT>. OXE looks that up in isUserInDico, finds the
+  registered subscriber, and routes to the endpoint recorded in the SIP
+  registrar's Contact binding (SIPp CALLER for From, SIPp CALLED for To).
+
+  CSV fields:
+    field0 = caller QMCDU
+    field1 = callee QMCDU
+    field2 = OXE_IP
+    field3 = OXE_PORT
+
+  Contact uses [local_ip]:[local_port] so OXE reaches SIPp back on the
+  correct socket, and transport=[transport] so the stored Contact matches
+  the actual TRANSPORT (UDP / TCP / TLS) sipp is running with.
+-->
+<scenario name="INVITE_Caller">
+
+<send retrans="500">
+<![CDATA[
+INVITE sip:[field1]@[field2]:[field3] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+To: <sip:[field1]@[field2]:[field3]>
+Call-ID: [call_id]
+CSeq: 1 INVITE
+Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
+Max-Forwards: 70
+User-Agent: SIPP
+Allow: INVITE, ACK, CANCEL, BYE, OPTIONS
+Supported: 100rel
+Accept: application/sdp
+Content-Type: application/sdp
+Content-Length: [len]
+
+v=0
+o=sipp 0 0 IN IP4 [local_ip]
+s=SDP data
+c=IN IP4 [media_ip]
+t=0 0
+m=audio [media_port] RTP/AVP 0 8
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=sendrecv
+]]>
+</send>
+
+<recv response="100" optional="true" timeout="5000">
+</recv>
+
+<recv response="180" optional="true" timeout="5000">
+</recv>
+
+<recv response="200" timeout="5000">
+</recv>
+
+<send>
+<![CDATA[
+ACK sip:[field1]@[field2]:[field3] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+[last_To:]
+Call-ID: [call_id]
+CSeq: 1 ACK
+Max-Forwards: 70
+User-Agent: SIPP
+Content-Length: 0
+]]>
+</send>
+
+<pause milliseconds="3000"/>
+
+<send>
+<![CDATA[
+BYE sip:[field1]@[field2]:[field3] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: <sip:[field0]@[field2]:[field3]>;tag=[call_number]
+[last_To:]
+Call-ID: [call_id]
+CSeq: 2 BYE
+Max-Forwards: 70
+User-Agent: SIPP
+Content-Length: 0
+]]>
+</send>
+
+<recv response="200" timeout="5000">
+</recv>
+
+<ResponseTimeRepartition value="100, 200, 300, 400, 500, 600, 700, 800, 900, 1000"/>
+<CallLengthRepartition value="10000, 15000, 20000"/>
+
+</scenario>
